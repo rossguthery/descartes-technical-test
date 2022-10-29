@@ -3,13 +3,14 @@ This Python script contains all the classes and functions required to carry out
 the Descartes Underwriting data scientist technical test, i.e. it:
 - Gets the data,
 - Cleans the data,
-- Executes select models,
 - Performs feature engineering,
+- Executes select models,
 - Reports the results, and
 - Exports the results.
 """
 
 # Import packages.
+import numpy as np
 import pandas as pd
 
 
@@ -41,12 +42,9 @@ class Data():
             filepath_or_buffer=self.file_path, index_col=self.index_col
         )
 
-    def __clean_data(self) -> pd.DataFrame:
-        """Takes in raw data and cleans it. This function was built for this
-        test's data. It is not intended for general use.
-
-        Returns:
-            pd.DataFrame: The clean data.
+    def __clean_data(self) -> None:
+        """Cleans the data. This function was built for this test and is not
+        intended for general use.
         """
         # Retitle columns so they are easier to understand.
         column_names: list = [
@@ -83,15 +81,19 @@ class Data():
             columns=["target_claim_amount", "yoj", "tif", "mvr_pts"]
         )
 
-        # Clean up string columns, convert monetary columns to numeric ones, and
-        # convert columns meant to be dummy columns into true dummy columns.
+        # Clean up string columns, convert monetary columns to the numeric type,
+        # and convert columns intended to be booleans into true booleans.
         self.data = (
             self.data.assign(
+                job = lambda df: df.job.replace(
+                    {"z_": ""}, regex=True
+                ),
+                car_type = lambda df: df.car_type.replace(
+                    {"z_": ""}, regex=True
+                ),
                 education = lambda df: df.education.replace(
                     {"z_": "", "<": ""}, regex=True
                 ),
-                job = lambda df: df.job.replace({"z_": ""}, regex=True),
-                car_type = lambda df: df.car_type.replace({"z_": ""}, regex=True),
                 income = lambda df: pd.to_numeric(
                     df.income.replace({"\$": "", ",": ""}, regex=True),
                     errors="coerce",
@@ -138,12 +140,39 @@ class Data():
             )
         )
 
-    def __call__(self):
-        """Executes a Data object. It does not return clean data. One can access
-        the clean data via the "data" attribute of the Data object.
-        """
-        # Get raw data.
-        self.data: pd.DataFrame = self.__get_data()
+        # Keep only positive car ages.
+        self.data = self.data[self.data.car_age >= 0]
 
-        # Clean raw data.
+        # Drop duplicate entries.
+        self.data = self.data.drop_duplicates()
+
+    def deal_with_nulls(self) -> None:
+        """Replaces null values in the age, job, income, car age, and home value
+        columns according to the strategy explained in the Jupyter notebook.
+        """
+        # Replace nulls in the car age column.
+        self.data.car_age = self.data.car_age.fillna(
+            value=np.mean(self.data.car_age)
+        )
+
+        # Replace nulls in the age column.
+        self.data.age = self.data.age.fillna(value=np.mean(self.data.age))
+
+        # Drop nulls in the job column.
+        self.data = self.data[self.data.job.notna()]
+
+        # Drop nulls in the income column.
+        self.data = self.data[self.data.income.notna()]
+
+        # Drop nulls in the home value column.
+        self.data = self.data[self.data.home_value.notna()]
+
+    def __call__(self) -> None:
+        """Executes a Data object. It does not return the data. One can access
+        the data via the "data" attribute of the Data object.
+        """
+        # Get data.
+        self.data = self.__get_data()
+
+        # Clean data.
         self.__clean_data()
