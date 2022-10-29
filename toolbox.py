@@ -84,18 +84,19 @@ class Data():
         )
 
         # Clean up string columns, convert monetary columns to the numeric type,
-        # and convert columns intended to be booleans into true booleans.
+        # and convert columns intended to be booleans into true booleans. Also,
+        # enfore certain data types.
         self.data = (
             self.data.assign(
                 job = lambda df: df.job.replace(
-                    {"z_": ""}, regex=True
-                ),
+                    {"z_": "", " ": "_"}, regex=True
+                ).str.lower(),
                 car_type = lambda df: df.car_type.replace(
-                    {"z_": ""}, regex=True
-                ),
+                    {"z_": "", " ": "_"}, regex=True
+                ).str.lower(),
                 education = lambda df: df.education.replace(
-                    {"z_": "", "<": ""}, regex=True
-                ),
+                    {"z_": "", "<": "", " ": "_"}, regex=True
+                ).str.lower(),
                 income = lambda df: pd.to_numeric(
                     df.income.replace({"\$": "", ",": ""}, regex=True),
                     errors="coerce",
@@ -140,7 +141,7 @@ class Data():
                     errors="coerce",
                 ),
             )
-        )
+        ).reset_index(drop=True)
 
         # If train set, drop duplicate entries and keep only positive car ages.
         if self.train:
@@ -151,22 +152,20 @@ class Data():
         """Replaces null values in the age, job, income, car age, and home value
         columns according to the strategy explained in the Jupyter notebook.
         """
-        # Replace nulls in the car age column.
-        self.data.car_age = self.data.car_age.fillna(
-            value=np.mean(self.data.car_age)
+        # Replace nulls with column's mean value.
+        self.data = (
+            self.data.assign(
+                car_age = lambda df: df.car_age.fillna(
+                    value=np.mean(df.car_age)
+                ),
+                age = lambda df: df.age.fillna(value=np.mean(df.age))
+            )
         )
 
-        # Replace nulls in the age column.
-        self.data.age = self.data.age.fillna(value=np.mean(self.data.age))
-
-        # Drop nulls in the job column.
-        self.data = self.data[self.data.job.notna()]
-
-        # Drop nulls in the income column.
-        self.data = self.data[self.data.income.notna()]
-
-        # Drop nulls in the home value column.
-        self.data = self.data[self.data.home_value.notna()]
+        # Drop nulls.
+        self.data = self.data.dropna(
+            subset=["job", "income", "home_value"], how="any"
+        )
 
     def __call__(self) -> None:
         """Executes a Data object. It does not return the data. One can access
@@ -177,3 +176,55 @@ class Data():
 
         # Clean data.
         self.__clean_data()
+
+
+class FeatureEngineerer():
+    """Manages all feature engineering, which mainly consists of one-hot
+    encoding the categorical variables, taking the log transform of so-called
+    monetary variables, and scaling.
+    """
+
+    def __init__(self, data: pd.DataFrame) -> None:
+        """Initializes a FeatureEngineerer object's attributes.
+
+        Args:
+            data (pd.DataFrame): The data post-cleaning.
+        """
+        self.data: pd.DataFrame = data
+
+    def __log_transform(self) -> None:
+        """Takes the log transformation of all the so-called monetary variables,
+        which includes income, home value, bluebook value, and last claim value.
+        """
+        # Take log transform, but add one to avoid divide-by-zero error.
+        self.data = (
+            self.data.assign(
+                log_income = lambda df: np.log(df.income+1),
+                log_home_value = lambda df: np.log(df.home_value+1),
+                log_bluebook_value = lambda df: np.log(df.bluebook_value+1),
+                log_last_claim_value = lambda df: np.log(df.last_claim_value+1),
+            )
+        )
+
+    def __one_hot_encoding(self) -> None:
+        """Performs one-hot encoding on all the categorical variables, which
+        includes education, job, and car type.
+        """
+        # Do one-hot encoding and drop columns we no longer need.
+        self.data = pd.get_dummies(
+            data=self.data, columns=["education", "job", "car_type"]
+        )
+
+    def __scale(self) -> None:
+        pass
+
+    def __call__(self) -> None:
+        """Executes a FeatureEngineerer object. It does not return the data. One
+        can access the data via the "data" attribute of the FeatureEngineerer
+        object.
+        """
+        # Take select log transforms.
+        self.__log_transform()
+
+        # Perform one-hot encodings.
+        self.__one_hot_encoding()
