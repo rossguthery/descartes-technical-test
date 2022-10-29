@@ -19,13 +19,15 @@ class Data():
     path the user passes as an argument.
     """
 
-    def __init__(self, file_path: str, index_col: int) -> None:
+    def __init__(self, train: bool, file_path: str, index_col: int) -> None:
         """Initializes a Data object's attributes.
 
         Args:
+            train (bool): Indicates if data is training data.
             file_path (str): The path of the file where the data is stored.
             index_col (int): The column to index the final DataFrame by.
         """
+        self.train: bool = train
         self.file_path: str = file_path
         self.index_col: int = index_col
         self.data: pd.DataFrame = pd.DataFrame()
@@ -140,11 +142,10 @@ class Data():
             )
         )
 
-        # Keep only positive car ages.
-        self.data = self.data[self.data.car_age >= 0]
-
-        # Drop duplicate entries.
-        self.data = self.data.drop_duplicates()
+        # If train set, drop duplicate entries and keep only positive car ages.
+        if self.train:
+            self.data = self.data.drop_duplicates()
+            self.data = self.data[self.data.car_age >= 0]
 
     def deal_with_nulls(self) -> None:
         """Replaces null values in the age, job, income, car age, and home value
