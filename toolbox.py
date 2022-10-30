@@ -13,6 +13,8 @@ the Descartes Underwriting data scientist technical test, i.e. it:
 import yaml
 import numpy as np
 import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import LogisticRegressionCV
 
@@ -314,6 +316,37 @@ class Modeller():
         # Set object attribute to the set of params of interest.
         self.model_params = model_params[self.entry_point]
 
+    def __plot_feature_importance(self, coefficients: np.ndarray) -> None:
+        """Plots the importance of each feature used to fit and predict a model.
+        Saves the plot in the plots folder under the run number.
+
+        Args:
+            coefficients (np.ndarray): The importance of each feature.
+        """
+        # Create a DataFrame of the features and their respective importances.
+        df_features: pd.DataFrame = pd.DataFrame.from_dict(
+            {"feature_names": list(self.train.columns), "coefficients": list(coefficients)}
+        )
+
+        # Sort the DataFrame in order decreasing feature importance.
+        df_features.sort_values(
+            by=["coefficients"], ascending=False, inplace=True
+        )
+
+        # Define size of bar plot.
+        plt.figure(figsize=(10, 8))
+
+        # Plot Searborn bar chart.
+        sns.barplot(x=df_features.coefficients, y=df_features.feature_names)
+
+        # Add chart labels.
+        plt.title(f"{self.entry_point} Feature Importance")
+        plt.xlabel("Importance")
+        plt.ylabel("Name")
+
+        # Save plot in appropriate folder without displaying it.
+        plt.savefig(f"plots/{self.entry_point}.png")
+
     def __logistic_regression(self, train_target: pd.Series) -> None:
         """Executes a cross-validated and regularized logistic regression model.
         Model performance is recorded in the "results" attribute.
@@ -346,7 +379,10 @@ class Modeller():
                 "train_score": [train_score],
             }
         )
-                
+
+        # Plot feature importance.
+        self.__plot_feature_importance(coefficients=log_reg_clf.coef_[0])
+
     def __call__(self) -> None:
         """Executes a Modeller object. It does not return the results. One can
         access the results via the "results" attribute of the Modeller object.
@@ -358,5 +394,5 @@ class Modeller():
         self.__parse_model_params()
 
         # Execute model specified by the user.
-        if self.model_params["model"] == "logistic_regression":
+        if self.model_params["model"] == "Logistic Regression":
             self.__logistic_regression(train_target=train_target)
