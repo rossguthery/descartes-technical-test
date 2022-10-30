@@ -1,0 +1,9 @@
+# RUN 1: Logistic Regression
+run_number_1:
+  Cs: 5
+  cv: 10
+  model: "logistic_regression"
+  solver: "lbfgs"
+  penalty: "l2"
+  scoring: "f1"
+  max_iter: 1000

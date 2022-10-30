@@ -10,8 +10,11 @@ the Descartes Underwriting data scientist technical test, i.e. it:
 """
 
 # Import packages.
+import yaml
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LogisticRegressionCV
 
 
 class Data():
@@ -140,6 +143,10 @@ class Data():
                     df.is_single_parent.replace({"Yes": "1", "No": "0"}, regex=True),
                     errors="coerce",
                 ),
+                for_commercial_use = lambda df: pd.to_numeric(
+                    df.for_commercial_use.replace({"Commercial": "1", "Private": "0"}, regex=True),
+                    errors="coerce",
+                ),
             )
         ).reset_index(drop=True)
 
@@ -166,6 +173,10 @@ class Data():
         self.data = self.data.dropna(
             subset=["job", "income", "home_value"], how="any"
         )
+
+        # Drop target flag column from test data.
+        if not self.train:
+            self.data = self.data.drop("target_flag", axis=1)
 
     def __call__(self) -> None:
         """Executes a Data object. It does not return the data. One can access
@@ -212,11 +223,18 @@ class FeatureEngineerer():
         """
         # Do one-hot encoding and drop columns we no longer need.
         self.data = pd.get_dummies(
-            data=self.data, columns=["education", "job", "car_type"]
+            data=self.data,
+            columns=["education", "job", "car_type"],
         )
 
-    def __scale(self) -> None:
-        pass
+    def __scale_features(self) -> None:
+        """Performs min-max scaling on all the data.
+        """
+        # Instantiate MinMaxScaler object.
+        scaler = MinMaxScaler()
+
+        # Perform scaling.
+        scaler.fit_transform(self.data)
 
     def __call__(self) -> None:
         """Executes a FeatureEngineerer object. It does not return the data. One
@@ -228,3 +246,117 @@ class FeatureEngineerer():
 
         # Perform one-hot encodings.
         self.__one_hot_encoding()
+
+        # Perform min-max scaling.
+        self.__scale_features()
+
+
+class Modeller():
+    """Manages everything to do with modelling the cleaned and feature
+    engineered data. This includes, but is not limited to, computing model
+    performance, plotting graphics that describe model performance, and
+    executing the model itself.
+    """
+
+    def __init__(
+        self,
+        test: pd.DataFrame,
+        train: pd.DataFrame,
+        config_path: str,
+        entry_point: str,
+    ) -> None:
+        """Initializes a Modeller object's attributes.
+
+        Args:
+            test (pd.DataFrame): The cleaned and feature engineered test data.
+            train (pd.DataFrame): The cleaned and feature engineered train data.
+            config_path (str): File path pointing to where model configs are.
+            entry_point (str): String indicating which model params to use.
+        """
+        self.test: pd.DataFrame = test
+        self.train: pd.DataFrame = train
+        self.config_path: str = config_path
+        self.entry_point: str = entry_point
+        self.model_params: dict = {}
+        self.results: pd.DataFrame = pd.DataFrame()
+
+    def __get_target(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Splits the target variable from the rest of the explanatory
+        variables.
+
+        Args:
+            data (pd.DataFrame): Either the train or test data.
+
+        Returns:
+            pd.DataFrame: The target variable.
+        """
+        # Separate the target variable.
+        target: pd.Series = data.target_flag
+
+        # Drop the target variable.
+        data = data.drop("target_flag", axis=1, inplace=True)
+
+        # Return the target.
+        return target
+
+    def __parse_model_params(self) -> dict:
+        """Uses the config path and entry point defined at object creation to
+        parse a YAML file. Doing so generates a dictionary of model params to
+        use during modelling.
+
+        Returns:
+            dict: A dictionary of model params.
+        """
+        # Load model configs YAML file.
+        with open(self.config_path) as file:
+            model_params: dict = yaml.load(file, Loader=yaml.FullLoader)
+        
+        # Set object attribute to the set of params of interest.
+        self.model_params = model_params[self.entry_point]
+
+    def __logistic_regression(self, train_target: pd.Series) -> None:
+        """Executes a cross-validated and regularized logistic regression model.
+        Model performance is recorded in the "results" attribute.
+
+        Args:
+            train_target (pd.Series): The train set target variable.
+        """
+        # Create logistic regression object.
+        log_reg_clf: LogisticRegressionCV = LogisticRegressionCV(
+            Cs=self.model_params["Cs"],
+            cv=self.model_params["cv"],
+            solver=self.model_params["solver"],
+            penalty=self.model_params["penalty"],
+            scoring=self.model_params["scoring"],
+            max_iter=self.model_params["max_iter"],
+        )
+
+        # Fit the model.
+        log_reg_clf.fit(X=self.train, y=train_target)
+
+        # Score train set performance.
+        train_score: float = log_reg_clf.score(X=self.train, y=train_target)
+
+        # Log scores and run information.
+        self.results = pd.DataFrame.from_dict(
+            {
+                "run_number": [self.entry_point.split("_")[-1]],
+                "model": [self.model_params["model"]],
+                "metric": [self.model_params["scoring"]],
+                "train_score": [train_score],
+            }
+        )
+                
+    def __call__(self) -> None:
+        """Executes a Modeller object. It does not return the results. One can
+        access the results via the "results" attribute of the Modeller object.
+        """
+        # Get target variables.
+        train_target: pd.Series = self.__get_target(data=self.train)
+
+        # Parse model config pased by the user.
+        self.__parse_model_params()
+
+        # Execute model specified by the user.
+        if self.model_params["model"] == "logistic_regression":
+            self.__logistic_regression(train_target=train_target)
