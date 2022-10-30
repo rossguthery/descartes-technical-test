@@ -10,6 +10,7 @@ the Descartes Underwriting data scientist technical test, i.e. it:
 """
 
 # Import packages.
+from operator import index
 import yaml
 import numpy as np
 import pandas as pd
@@ -206,7 +207,7 @@ class FeatureEngineerer():
         """
         self.data: pd.DataFrame = data
 
-    def __log_transform(self) -> None:
+    def log_transform(self) -> None:
         """Takes the log transformation of all the so-called monetary variables,
         which includes income, home value, bluebook value, and last claim value.
         """
@@ -244,9 +245,6 @@ class FeatureEngineerer():
         """Executes a FeatureEngineerer object. It does not return the data. One
         can access the data via the data attribute of the object.
         """
-        # Take select log transformations.
-        self.__log_transform()
-
         # Perform one-hot encoding.
         self.__one_hot_encoding()
 
@@ -380,6 +378,31 @@ class Modeller():
 
         # Plot feature importance.
         self.__plot_feature_importance(coefficients=log_reg_clf.coef_[0])
+
+        # Save predictions on test set.
+        self.__save_predictions(preds=log_reg_clf.predict(X=self.test))
+
+    def __save_predictions(self, preds: np.ndarray) -> None:
+        """Saves the predictions made on the test set in the format proposed on
+        the original Kaggle competition's website, i.e.:
+
+        index, target
+        2,0
+        5,0
+        6,1
+        ...
+
+        Args:
+            preds (np.ndarray): The predictions made using the test set.
+        """
+        # Make a DataFrame using the predictions.
+        df_preds: pd.DataFrame = pd.DataFrame.from_records(
+            {"index": list(self.test.index), "target": list(preds)},
+            index="index",
+        )
+
+        # Export CSV of predictions to the appropriate folder.
+        df_preds.to_csv(f"predictions/{self.entry_point}.csv")
 
     def __call__(self) -> None:
         """Executes a Modeller object. It does not return the results. One can
