@@ -28,7 +28,7 @@ class Data():
         """Initializes a Data object's attributes.
 
         Args:
-            train (bool): Indicates if data is training data.
+            train (bool): Indicates if data is the train set.
             file_path (str): The path of the file where the data is stored.
             index_col (int): The column to index the final DataFrame by.
         """
@@ -89,8 +89,7 @@ class Data():
         )
 
         # Clean up string columns, convert monetary columns to the numeric type,
-        # and convert columns intended to be booleans into true booleans. Also,
-        # enfore certain data types.
+        # and convert columns intended to be booleans to true booleans.
         self.data = (
             self.data.assign(
                 job = lambda df: df.job.replace(
@@ -137,7 +136,7 @@ class Data():
                 is_urban = lambda df: pd.to_numeric(
                     df.is_urban.replace(
                         {"Highly Urban/ Urban": "1", "z_Highly Rural/ Rural": "0"},
-                        regex=True
+                        regex=True,
                     ),
                     errors="coerce",
                 ),
@@ -146,7 +145,7 @@ class Data():
                     errors="coerce",
                 ),
                 for_commercial_use = lambda df: pd.to_numeric(
-                    df.for_commercial_use.replace({"Commercial": "1", "Private": "0"}, regex=True),
+                    df.for_commercial_use.replace({"Commercial": "1", "Private": "0"},regex=True),
                     errors="coerce",
                 ),
             )
@@ -160,6 +159,7 @@ class Data():
     def deal_with_nulls(self) -> None:
         """Replaces null values in the age, job, income, car age, and home value
         columns according to the strategy explained in the Jupyter notebook.
+        Also, drops the target flag column from the test set as it's only nulls.
         """
         # Replace nulls with column's mean value.
         self.data = (
@@ -178,11 +178,11 @@ class Data():
 
         # Drop target flag column from test data.
         if not self.train:
-            self.data = self.data.drop("target_flag", axis=1)
+            self.data = self.data.drop(columns=["target_flag"])
 
     def __call__(self) -> None:
         """Executes a Data object. It does not return the data. One can access
-        the data via the "data" attribute of the Data object.
+        the data via the data attribute of the object.
         """
         # Get data.
         self.data = self.__get_data()
@@ -194,14 +194,15 @@ class Data():
 class FeatureEngineerer():
     """Manages all feature engineering, which mainly consists of one-hot
     encoding the categorical variables, taking the log transform of so-called
-    monetary variables, and scaling.
+    monetary variables, and scaling. Other transformations are potentially part
+    of this class as well.
     """
 
     def __init__(self, data: pd.DataFrame) -> None:
         """Initializes a FeatureEngineerer object's attributes.
 
         Args:
-            data (pd.DataFrame): The data post-cleaning.
+            data (pd.DataFrame): The data post cleaning.
         """
         self.data: pd.DataFrame = data
 
@@ -209,7 +210,7 @@ class FeatureEngineerer():
         """Takes the log transformation of all the so-called monetary variables,
         which includes income, home value, bluebook value, and last claim value.
         """
-        # Take log transform, but add one to avoid divide-by-zero error.
+        # Take log transform, but add one to avoid a divide-by-zero error.
         self.data = (
             self.data.assign(
                 log_income = lambda df: np.log(df.income+1),
@@ -223,7 +224,8 @@ class FeatureEngineerer():
         """Performs one-hot encoding on all the categorical variables, which
         includes education, job, and car type.
         """
-        # Do one-hot encoding and drop columns we no longer need.
+        # Do one-hot encoding. Columns we no longer need get automatically
+        # dropped from the DataFrame.
         self.data = pd.get_dummies(
             data=self.data,
             columns=["education", "job", "car_type"],
@@ -232,7 +234,7 @@ class FeatureEngineerer():
     def __scale_features(self) -> None:
         """Performs min-max scaling on all the data.
         """
-        # Instantiate MinMaxScaler object.
+        # Instantiate a MinMaxScaler object.
         scaler = MinMaxScaler()
 
         # Perform scaling.
@@ -240,13 +242,12 @@ class FeatureEngineerer():
 
     def __call__(self) -> None:
         """Executes a FeatureEngineerer object. It does not return the data. One
-        can access the data via the "data" attribute of the FeatureEngineerer
-        object.
+        can access the data via the data attribute of the object.
         """
-        # Take select log transforms.
+        # Take select log transformations.
         self.__log_transform()
 
-        # Perform one-hot encodings.
+        # Perform one-hot encoding.
         self.__one_hot_encoding()
 
         # Perform min-max scaling.
@@ -270,8 +271,8 @@ class Modeller():
         """Initializes a Modeller object's attributes.
 
         Args:
-            test (pd.DataFrame): The cleaned and feature engineered test data.
-            train (pd.DataFrame): The cleaned and feature engineered train data.
+            test (pd.DataFrame): The cleaned and feature engineered TEST set.
+            train (pd.DataFrame): The cleaned and feature engineered TRAIN set.
             config_path (str): File path pointing to where model configs are.
             entry_point (str): String indicating which model params to use.
         """
@@ -282,21 +283,18 @@ class Modeller():
         self.model_params: dict = {}
         self.results: pd.DataFrame = pd.DataFrame()
 
-    def __get_target(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Splits the target variable from the rest of the explanatory
+    def __get_target(self) -> pd.Series:
+        """Splits the target variable from the rest of the explanatory train
         variables.
 
-        Args:
-            data (pd.DataFrame): Either the train or test data.
-
         Returns:
-            pd.DataFrame: The target variable.
+            pd.Series: The target variable.
         """
         # Separate the target variable.
-        target: pd.Series = data.target_flag
+        target: pd.Series = self.train.target_flag
 
         # Drop the target variable.
-        data = data.drop("target_flag", axis=1, inplace=True)
+        self.train = self.train.drop(columns=["target_flag"])
 
         # Return the target.
         return target
@@ -313,7 +311,7 @@ class Modeller():
         with open(self.config_path) as file:
             model_params: dict = yaml.load(file, Loader=yaml.FullLoader)
         
-        # Set object attribute to the set of params of interest.
+        # Set model params attribute to the set of parameters of interest.
         self.model_params = model_params[self.entry_point]
 
     def __plot_feature_importance(self, coefficients: np.ndarray) -> None:
@@ -328,7 +326,7 @@ class Modeller():
             {"feature_names": list(self.train.columns), "coefficients": list(coefficients)}
         )
 
-        # Sort the DataFrame in order decreasing feature importance.
+        # Sort the DataFrame in order of decreasing feature importance.
         df_features.sort_values(
             by=["coefficients"], ascending=False, inplace=True
         )
@@ -340,19 +338,19 @@ class Modeller():
         sns.barplot(x=df_features.coefficients, y=df_features.feature_names)
 
         # Add chart labels.
-        plt.title(f"{self.entry_point} Feature Importance")
+        plt.title(f"{self.entry_point.title()} Feature Importance")
         plt.xlabel("Importance")
         plt.ylabel("Name")
 
-        # Save plot in appropriate folder without displaying it.
+        # Save plot in appropriate folder.
         plt.savefig(f"plots/{self.entry_point}.png")
 
-    def __logistic_regression(self, train_target: pd.Series) -> None:
+    def __logistic_regression(self, target: pd.Series) -> None:
         """Executes a cross-validated and regularized logistic regression model.
-        Model performance is recorded in the "results" attribute.
+        Model performance is recorded in the results attribute.
 
         Args:
-            train_target (pd.Series): The train set target variable.
+            target (pd.Series): The train set target variable.
         """
         # Create logistic regression object.
         log_reg_clf: LogisticRegressionCV = LogisticRegressionCV(
@@ -365,10 +363,10 @@ class Modeller():
         )
 
         # Fit the model.
-        log_reg_clf.fit(X=self.train, y=train_target)
+        log_reg_clf.fit(X=self.train, y=target)
 
         # Score train set performance.
-        train_score: float = log_reg_clf.score(X=self.train, y=train_target)
+        train_score: float = log_reg_clf.score(X=self.train, y=target)
 
         # Log scores and run information.
         self.results = pd.DataFrame.from_dict(
@@ -385,14 +383,14 @@ class Modeller():
 
     def __call__(self) -> None:
         """Executes a Modeller object. It does not return the results. One can
-        access the results via the "results" attribute of the Modeller object.
+        access the results via the results attribute of the Modeller object.
         """
-        # Get target variables.
-        train_target: pd.Series = self.__get_target(data=self.train)
+        # Get target variable.
+        target: pd.Series = self.__get_target()
 
         # Parse model config pased by the user.
         self.__parse_model_params()
 
         # Execute model specified by the user.
-        if self.model_params["model"] == "Logistic Regression":
-            self.__logistic_regression(train_target=train_target)
+        if self.model_params["model"] == "logistic_regression":
+            self.__logistic_regression(target=target)
