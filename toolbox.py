@@ -16,6 +16,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.svm import LinearSVC
+from sklearn.metrics import f1_score
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import LogisticRegression
 
@@ -194,9 +195,8 @@ class Data():
 
 class FeatureEngineerer():
     """Manages all feature engineering, which mainly consists of one-hot
-    encoding the categorical variables, taking the log transform of so-called
-    monetary variables, and scaling. Other transformations are potentially part
-    of this class as well.
+    encoding the categorical variables, creating some interaction terms, and
+    scaling. Other transformations are potentially part of this class as well.
     """
 
     def __init__(self, data: pd.DataFrame) -> None:
@@ -223,8 +223,8 @@ class FeatureEngineerer():
         )
 
     def __one_hot_encoding(self) -> None:
-        """Performs one-hot encoding on all the categorical variables, which
-        includes education, job, and car type.
+        """Performs one-hot encoding on all the non-numerical categorical
+        variables, which includes education, job, and car type.
         """
         # Do one-hot encoding. Columns we no longer need get automatically
         # dropped from the DataFrame.
@@ -308,14 +308,14 @@ class Modeller():
         Returns:
             dict: A dictionary of model params.
         """
-        # Load model configs YAML file.
+        # Load the model configs YAML file.
         with open(self.config_path) as file:
             model_params: dict = yaml.load(file, Loader=yaml.FullLoader)
-        
+
         # Set model params attribute to the set of parameters of interest.
         self.model_params = model_params[self.entry_point]
 
-    def __plot_feature_importance(self, coefficients: np.ndarray) -> None:
+    def __plot_feature_importances(self, coefficients: np.ndarray) -> None:
         """Plots the importance of each feature used to fit and predict a model.
         Saves the plot in the plots folder under the run number.
 
@@ -343,83 +343,6 @@ class Modeller():
         # Save plot in appropriate folder.
         plt.savefig(f"plots/{self.entry_point}.png")
 
-    def __logistic_regression(self, target: pd.Series) -> None:
-        """Executes a regularized logistic regression model. Model performance
-        is recorded in the results attribute.
-
-        Args:
-            target (pd.Series): The train set target variable.
-        """
-        # Create logistic regression object.
-        log_reg: LogisticRegression = LogisticRegression(
-            C=self.model_params["C"],
-            dual=self.model_params["dual"],
-            solver=self.model_params["solver"],
-            penalty=self.model_params["penalty"],
-            max_iter=self.model_params["max_iter"],
-            random_state=self.model_params["random_state"],
-        )
-
-        # Fit the model.
-        log_reg.fit(X=self.train, y=target)
-
-        # Score train set performance.
-        train_score: float = log_reg.score(X=self.train, y=target)
-
-        # Log scores and run information.
-        self.results = pd.DataFrame.from_dict(
-            {
-                "run_number": [self.entry_point.split("_")[-1]],
-                "model": [self.model_params["model"]],
-                "metric": [self.model_params["metric"]],
-                "train_score": [train_score],
-            }
-        )
-
-        # Plot feature importance.
-        self.__plot_feature_importance(coefficients=log_reg.coef_[0])
-
-        # Save predictions on test set.
-        self.__save_predictions(preds=log_reg.predict(X=self.test))
-
-    def __linear_svc(self, target: pd.Series) -> None:
-        """Executes a cross-validated and regularized support vector linear
-        classifier model. Model performance is in the results attribute.
-
-        Args:
-            target (pd.Series): The train set target variable.
-        """
-        # Create a support vector linear classifier object.
-        linear_svc: LinearSVC = LinearSVC(
-            C=self.model_params["C"],
-            loss=self.model_params["loss"],
-            dual=self.model_params["dual"],
-            penalty=self.model_params["penalty"],
-            max_iter=self.model_params["max_iter"],
-        )
-
-        # Fit the model.
-        linear_svc.fit(X=self.train, y=target)
-
-        # Score train set performance.
-        train_score: float = linear_svc.score(X=self.train, y=target)
-
-        # Log scores and run information.
-        self.results = pd.DataFrame.from_dict(
-            {
-                "run_number": [self.entry_point.split("_")[-1]],
-                "model": [self.model_params["model"]],
-                "metric": [self.model_params["metric"]],
-                "train_score": [train_score],
-            }
-        )
-
-        # Plot feature importance.
-        self.__plot_feature_importance(coefficients=linear_svc.coef_[0])
-
-        # Save predictions on test set.
-        self.__save_predictions(preds=linear_svc.predict(X=self.test))
-
     def __save_predictions(self, preds: np.ndarray) -> None:
         """Saves the predictions made on the test set in the format proposed on
         the original Kaggle competition's website, i.e.:
@@ -441,6 +364,89 @@ class Modeller():
 
         # Export CSV of predictions to the appropriate folder.
         df_preds.to_csv(f"predictions/{self.entry_point}.csv")
+
+    def __logistic_regression(self, target: pd.Series) -> None:
+        """Executes a regularized logistic regression model. Model performance
+        is recorded in the results attribute.
+
+        Args:
+            target (pd.Series): The train set target variable.
+        """
+        # Create logistic regression object.
+        log_reg: LogisticRegression = LogisticRegression(
+            C=self.model_params["C"],
+            dual=self.model_params["dual"],
+            solver=self.model_params["solver"],
+            penalty=self.model_params["penalty"],
+            max_iter=self.model_params["max_iter"],
+            random_state=self.model_params["random_state"],
+        )
+
+        # Fit the model.
+        log_reg.fit(X=self.train, y=target)
+
+        # Make predictions on train set.
+        train_preds: pd.Series = log_reg.predict(X=self.train)
+
+        # Score train set performance.
+        train_score: float = f1_score(y_true=target, y_pred=train_preds)
+
+        # Log score and run information.
+        self.results = pd.DataFrame.from_dict(
+            {
+                "run_number": [self.entry_point.split("_")[-1]],
+                "model": [self.model_params["model"]],
+                "metric": [self.model_params["metric"]],
+                "train_score": [train_score],
+            }
+        )
+
+        # Plot feature importance.
+        self.__plot_feature_importances(coefficients=log_reg.coef_[0])
+
+        # Save predictions on test set.
+        self.__save_predictions(preds=log_reg.predict(X=self.test))
+
+    def __linear_svc(self, target: pd.Series) -> None:
+        """Executes a regularized support vector linear classifier model. Model
+        performance is in the results attribute.
+
+        Args:
+            target (pd.Series): The train set target variable.
+        """
+        # Create a support vector linear classifier object.
+        linear_svc: LinearSVC = LinearSVC(
+            C=self.model_params["C"],
+            loss=self.model_params["loss"],
+            dual=self.model_params["dual"],
+            penalty=self.model_params["penalty"],
+            max_iter=self.model_params["max_iter"],
+        )
+
+        # Fit the model.
+        linear_svc.fit(X=self.train, y=target)
+
+        # Make predictions on train set.
+        train_preds: pd.Series = linear_svc.predict(X=self.train)
+
+        # Score train set performance.
+        train_score: float = f1_score(y_true=target, y_pred=train_preds)
+
+        # Log score and run information.
+        self.results = pd.DataFrame.from_dict(
+            {
+                "run_number": [self.entry_point.split("_")[-1]],
+                "model": [self.model_params["model"]],
+                "metric": [self.model_params["metric"]],
+                "train_score": [train_score],
+            }
+        )
+
+        # Plot feature importance.
+        self.__plot_feature_importances(coefficients=linear_svc.coef_[0])
+
+        # Save predictions on test set.
+        self.__save_predictions(preds=linear_svc.predict(X=self.test))
 
     def __call__(self) -> None:
         """Executes a Modeller object. It does not return the results. One can

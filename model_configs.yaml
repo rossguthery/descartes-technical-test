@@ -3,7 +3,7 @@ run_number_1:
   dual: False
   model: "logistic_regression"
   solver: "saga"
-  metric: "mean_accuracy"
+  metric: "f1"
   penalty: "l1"
   max_iter: 2500
   random_state: 25
@@ -13,6 +13,6 @@ run_number_2:
   loss: "squared_hinge"
   dual: False
   model: "linear_svc"
-  metric: "mean_accuracy"
+  metric: "f1"
   penalty: "l1"
   max_iter: 5000
