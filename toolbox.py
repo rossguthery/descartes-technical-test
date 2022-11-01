@@ -10,14 +10,14 @@ the Descartes Underwriting data scientist technical test, i.e. it:
 """
 
 # Import packages.
-from operator import index
 import yaml
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.svm import LinearSVC
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.linear_model import LogisticRegressionCV
+from sklearn.linear_model import LogisticRegression
 
 
 class Data():
@@ -207,17 +207,18 @@ class FeatureEngineerer():
         """
         self.data: pd.DataFrame = data
 
-    def log_transform(self) -> None:
-        """Takes the log transformation of all the so-called monetary variables,
-        which includes income, home value, bluebook value, and last claim value.
+    def get_interaction_terms(self) -> None:
+        """Adds the interaction terms mentioned in the Jupyter notebook to the
+        data set the object was instantiated with.
         """
-        # Take log transform, but add one to avoid a divide-by-zero error.
+        # Add the interaction terms.
         self.data = (
             self.data.assign(
-                log_income = lambda df: np.log(df.income+1),
-                log_home_value = lambda df: np.log(df.home_value+1),
-                log_bluebook_value = lambda df: np.log(df.bluebook_value+1),
-                log_last_claim_value = lambda df: np.log(df.last_claim_value+1),
+                female_suv = lambda df: df.is_female * df.car_type_suv,
+                female_red_car = lambda df: df.is_female * df.is_red_car,
+                high_school_car_age = lambda df: (
+                    df.education_high_school * df.car_age
+                ),
             )
         )
 
@@ -239,7 +240,9 @@ class FeatureEngineerer():
         scaler = MinMaxScaler()
 
         # Perform scaling.
-        scaler.fit_transform(self.data)
+        self.data = pd.DataFrame(
+            scaler.fit_transform(X=self.data), columns=self.data.columns
+        )
 
     def __call__(self) -> None:
         """Executes a FeatureEngineerer object. It does not return the data. One
@@ -329,9 +332,6 @@ class Modeller():
             by=["coefficients"], ascending=False, inplace=True
         )
 
-        # Define size of bar plot.
-        plt.figure(figsize=(10, 8))
-
         # Plot Searborn bar chart.
         sns.barplot(x=df_features.coefficients, y=df_features.feature_names)
 
@@ -344,43 +344,81 @@ class Modeller():
         plt.savefig(f"plots/{self.entry_point}.png")
 
     def __logistic_regression(self, target: pd.Series) -> None:
-        """Executes a cross-validated and regularized logistic regression model.
-        Model performance is recorded in the results attribute.
+        """Executes a regularized logistic regression model. Model performance
+        is recorded in the results attribute.
 
         Args:
             target (pd.Series): The train set target variable.
         """
         # Create logistic regression object.
-        log_reg_clf: LogisticRegressionCV = LogisticRegressionCV(
-            Cs=self.model_params["Cs"],
-            cv=self.model_params["cv"],
+        log_reg: LogisticRegression = LogisticRegression(
+            C=self.model_params["C"],
+            dual=self.model_params["dual"],
             solver=self.model_params["solver"],
             penalty=self.model_params["penalty"],
-            scoring=self.model_params["scoring"],
             max_iter=self.model_params["max_iter"],
+            random_state=self.model_params["random_state"],
         )
 
         # Fit the model.
-        log_reg_clf.fit(X=self.train, y=target)
+        log_reg.fit(X=self.train, y=target)
 
         # Score train set performance.
-        train_score: float = log_reg_clf.score(X=self.train, y=target)
+        train_score: float = log_reg.score(X=self.train, y=target)
 
         # Log scores and run information.
         self.results = pd.DataFrame.from_dict(
             {
                 "run_number": [self.entry_point.split("_")[-1]],
                 "model": [self.model_params["model"]],
-                "metric": [self.model_params["scoring"]],
+                "metric": [self.model_params["metric"]],
                 "train_score": [train_score],
             }
         )
 
         # Plot feature importance.
-        self.__plot_feature_importance(coefficients=log_reg_clf.coef_[0])
+        self.__plot_feature_importance(coefficients=log_reg.coef_[0])
 
         # Save predictions on test set.
-        self.__save_predictions(preds=log_reg_clf.predict(X=self.test))
+        self.__save_predictions(preds=log_reg.predict(X=self.test))
+
+    def __linear_svc(self, target: pd.Series) -> None:
+        """Executes a cross-validated and regularized support vector linear
+        classifier model. Model performance is in the results attribute.
+
+        Args:
+            target (pd.Series): The train set target variable.
+        """
+        # Create a support vector linear classifier object.
+        linear_svc: LinearSVC = LinearSVC(
+            C=self.model_params["C"],
+            loss=self.model_params["loss"],
+            dual=self.model_params["dual"],
+            penalty=self.model_params["penalty"],
+            max_iter=self.model_params["max_iter"],
+        )
+
+        # Fit the model.
+        linear_svc.fit(X=self.train, y=target)
+
+        # Score train set performance.
+        train_score: float = linear_svc.score(X=self.train, y=target)
+
+        # Log scores and run information.
+        self.results = pd.DataFrame.from_dict(
+            {
+                "run_number": [self.entry_point.split("_")[-1]],
+                "model": [self.model_params["model"]],
+                "metric": [self.model_params["metric"]],
+                "train_score": [train_score],
+            }
+        )
+
+        # Plot feature importance.
+        self.__plot_feature_importance(coefficients=linear_svc.coef_[0])
+
+        # Save predictions on test set.
+        self.__save_predictions(preds=linear_svc.predict(X=self.test))
 
     def __save_predictions(self, preds: np.ndarray) -> None:
         """Saves the predictions made on the test set in the format proposed on
@@ -417,3 +455,5 @@ class Modeller():
         # Execute model specified by the user.
         if self.model_params["model"] == "logistic_regression":
             self.__logistic_regression(target=target)
+        if self.model_params["model"] == "linear_svc":
+            self.__linear_svc(target=target)
