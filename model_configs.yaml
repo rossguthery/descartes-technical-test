@@ -1,18 +1,51 @@
+# LOGISTIC REGRESSION
 run_number_1:
-  C: 5
+  C: 1
   dual: False
   model: "logistic_regression"
   solver: "saga"
   metric: "f1"
-  penalty: "l1"
-  max_iter: 2500
+  penalty: "elasticnet"
+  cv_iter: 10
+  l1_ratio: 0.5
+  max_iter: 5000
   random_state: 25
 
+# LINEAR SVC
 run_number_2:
-  C: 5
-  loss: "squared_hinge"
-  dual: False
-  model: "linear_svc"
+  C: 0.4
+  model: "svc"
   metric: "f1"
-  penalty: "l1"
-  max_iter: 5000
+  kernel: "linear"
+  cv_iter: 10
+  max_iter: 100000
+
+# POLY SVC
+run_number_3:
+  C: 5.25
+  model: "svc"
+  metric: "f1"
+  kernel: "poly"
+  cv_iter: 10
+  max_iter: 100000
+
+# RBF SVC
+run_number_4:
+  C: 2
+  model: "svc"
+  metric: "f1"
+  kernel: "rbf"
+  cv_iter: 10
+  max_iter: 100000
+
+# CATBOOST
+run_number_5:
+  depth: 8
+  model: "catboost"
+  metric: "F1"
+  cv_iter: 10
+  verbose: False
+  iterations: 1000
+  l2_leaf_reg: 2
+  learning_rate: 0.01
+  random_strength: 1
