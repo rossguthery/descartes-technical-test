@@ -10,18 +10,21 @@ the Descartes Underwriting data scientist technical test, i.e. it:
 """
 
 # Import packages.
+from typing import Callable, Tuple
 import yaml
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.svm import LinearSVC
+from catboost import CatBoostClassifier, Pool
+from sklearn.svm import SVC
 from sklearn.metrics import f1_score
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import cross_validate
 from sklearn.linear_model import LogisticRegression
 
 
-class Data():
+class Data:
     """Manages the reading in and the cleaning of the data stored at the file
     path the user passes as an argument.
     """
@@ -47,12 +50,10 @@ class Data():
         Returns:
             pd.DataFrame: The data stored at the file path.
         """
-        return pd.read_csv(
-            filepath_or_buffer=self.file_path, index_col=self.index_col
-        )
+        return pd.read_csv(filepath_or_buffer=self.file_path, index_col=self.index_col)
 
     def __clean_data(self) -> None:
-        """Cleans the data. This function was built for this test and is not
+        """Cleans the data. This function was built for this exercise and is not
         intended for general use.
         """
         # Retitle columns so they are easier to understand.
@@ -94,60 +95,61 @@ class Data():
         # and convert columns intended to be booleans to true booleans.
         self.data = (
             self.data.assign(
-                job = lambda df: df.job.replace(
+                job=lambda df: df.job.replace(
                     {"z_": "", " ": "_"}, regex=True
                 ).str.lower(),
-                car_type = lambda df: df.car_type.replace(
+                car_type=lambda df: df.car_type.replace(
                     {"z_": "", " ": "_"}, regex=True
                 ).str.lower(),
-                education = lambda df: df.education.replace(
+                education=lambda df: df.education.replace(
                     {"z_": "", "<": "", " ": "_"}, regex=True
                 ).str.lower(),
-                income = lambda df: pd.to_numeric(
-                    df.income.replace({"\$": "", ",": ""}, regex=True),
-                    errors="coerce",
+                income=lambda df: pd.to_numeric(
+                    df.income.replace({"\$": "", ",": ""}, regex=True), errors="coerce",
                 ),
-                home_value = lambda df: pd.to_numeric(
+                home_value=lambda df: pd.to_numeric(
                     df.home_value.replace({"\$": "", ",": ""}, regex=True),
                     errors="coerce",
                 ),
-                bluebook_value = lambda df: pd.to_numeric(
+                bluebook_value=lambda df: pd.to_numeric(
                     df.bluebook_value.replace({"\$": "", ",": ""}, regex=True),
                     errors="coerce",
                 ),
-                last_claim_value = lambda df: pd.to_numeric(
+                last_claim_value=lambda df: pd.to_numeric(
                     df.last_claim_value.replace({"\$": "", ",": ""}, regex=True),
                     errors="coerce",
                 ),
-                is_female = lambda df: pd.to_numeric(
+                is_female=lambda df: pd.to_numeric(
                     df.is_female.replace({"z_F": "1", "M": "0"}, regex=True),
                     errors="coerce",
                 ),
-                is_red_car = lambda df: pd.to_numeric(
+                is_red_car=lambda df: pd.to_numeric(
                     df.is_red_car.replace({"yes": "1", "no": "0"}, regex=True),
                     errors="coerce",
                 ),
-                was_revoked = lambda df: pd.to_numeric(
+                was_revoked=lambda df: pd.to_numeric(
                     df.was_revoked.replace({"Yes": "1", "No": "0"}, regex=True),
                     errors="coerce",
                 ),
-                is_married = lambda df: pd.to_numeric(
+                is_married=lambda df: pd.to_numeric(
                     df.is_married.replace({"Yes": "1", "z_No": "0"}, regex=True),
                     errors="coerce",
                 ),
-                is_urban = lambda df: pd.to_numeric(
+                is_urban=lambda df: pd.to_numeric(
                     df.is_urban.replace(
                         {"Highly Urban/ Urban": "1", "z_Highly Rural/ Rural": "0"},
                         regex=True,
                     ),
                     errors="coerce",
                 ),
-                is_single_parent = lambda df: pd.to_numeric(
+                is_single_parent=lambda df: pd.to_numeric(
                     df.is_single_parent.replace({"Yes": "1", "No": "0"}, regex=True),
                     errors="coerce",
                 ),
-                for_commercial_use = lambda df: pd.to_numeric(
-                    df.for_commercial_use.replace({"Commercial": "1", "Private": "0"},regex=True),
+                for_commercial_use=lambda df: pd.to_numeric(
+                    df.for_commercial_use.replace(
+                        {"Commercial": "1", "Private": "0"}, regex=True
+                    ),
                     errors="coerce",
                 ),
             )
@@ -164,19 +166,13 @@ class Data():
         Also, drops the target flag column from the test set as it's only nulls.
         """
         # Replace nulls with column's mean value.
-        self.data = (
-            self.data.assign(
-                car_age = lambda df: df.car_age.fillna(
-                    value=np.mean(df.car_age)
-                ),
-                age = lambda df: df.age.fillna(value=np.mean(df.age))
-            )
+        self.data = self.data.assign(
+            car_age=lambda df: df.car_age.fillna(value=np.mean(df.car_age)),
+            age=lambda df: df.age.fillna(value=np.mean(df.age)),
         )
 
         # Drop nulls.
-        self.data = self.data.dropna(
-            subset=["job", "income", "home_value"], how="any"
-        )
+        self.data = self.data.dropna(subset=["job", "income", "home_value"], how="any")
 
         # Drop target flag column from test data.
         if not self.train:
@@ -193,10 +189,10 @@ class Data():
         self.__clean_data()
 
 
-class FeatureEngineerer():
+class FeatureEngineerer:
     """Manages all feature engineering, which mainly consists of one-hot
     encoding the categorical variables, creating some interaction terms, and
-    scaling. Other transformations are potentially part of this class as well.
+    taking several log transformations.
     """
 
     def __init__(self, data: pd.DataFrame) -> None:
@@ -207,21 +203,6 @@ class FeatureEngineerer():
         """
         self.data: pd.DataFrame = data
 
-    def get_interaction_terms(self) -> None:
-        """Adds the interaction terms mentioned in the Jupyter notebook to the
-        data set the object was instantiated with.
-        """
-        # Add the interaction terms.
-        self.data = (
-            self.data.assign(
-                female_suv = lambda df: df.is_female * df.car_type_suv,
-                female_red_car = lambda df: df.is_female * df.is_red_car,
-                high_school_car_age = lambda df: (
-                    df.education_high_school * df.car_age
-                ),
-            )
-        )
-
     def __one_hot_encoding(self) -> None:
         """Performs one-hot encoding on all the non-numerical categorical
         variables, which includes education, job, and car type.
@@ -229,19 +210,34 @@ class FeatureEngineerer():
         # Do one-hot encoding. Columns we no longer need get automatically
         # dropped from the DataFrame.
         self.data = pd.get_dummies(
-            data=self.data,
-            columns=["education", "job", "car_type"],
+            data=self.data, columns=["education", "job", "car_type"],
         )
 
-    def __scale_features(self) -> None:
-        """Performs min-max scaling on all the data.
+    def get_interaction_terms(self) -> None:
+        """Adds the interaction terms mentioned in the Jupyter notebook to the
+        data set the object was instantiated with.
         """
-        # Instantiate a MinMaxScaler object.
-        scaler = MinMaxScaler()
+        self.data = self.data.assign(
+            female_suv=lambda df: df.is_female * df.car_type_suv,
+            female_red_car=lambda df: df.is_female * df.is_red_car,
+            high_school_car_age=lambda df: (df.education_high_school * df.car_age),
+        )
 
-        # Perform scaling.
-        self.data = pd.DataFrame(
-            scaler.fit_transform(X=self.data), columns=self.data.columns
+    def get_log_transforms(self) -> None:
+        """Takes the log transformation of all the so-called monetary variables,
+        which includes income, home value, bluebook value, and last claim value.
+        """
+        # Take log transform, but add one to avoid a divide-by-zero error.
+        self.data = self.data.assign(
+            log_income=lambda df: np.log(df.income + 1),
+            log_home_value=lambda df: np.log(df.home_value + 1),
+            log_bluebook_value=lambda df: np.log(df.bluebook_value + 1),
+            log_last_claim_value=lambda df: np.log(df.last_claim_value + 1),
+        )
+
+        # Drop columns we no longer need.
+        self.data = self.data.drop(
+            columns=["income", "home_value", "bluebook_value", "last_claim_value",]
         )
 
     def __call__(self) -> None:
@@ -251,11 +247,8 @@ class FeatureEngineerer():
         # Perform one-hot encoding.
         self.__one_hot_encoding()
 
-        # Perform min-max scaling.
-        self.__scale_features()
 
-
-class Modeller():
+class Modeller:
     """Manages everything to do with modelling the cleaned and feature
     engineered data. This includes, but is not limited to, computing model
     performance, plotting graphics that describe model performance, and
@@ -275,30 +268,26 @@ class Modeller():
             test (pd.DataFrame): The cleaned and feature engineered TEST set.
             train (pd.DataFrame): The cleaned and feature engineered TRAIN set.
             config_path (str): File path pointing to where model configs are.
-            entry_point (str): String indicating which model params to use.
+            entry_point (str): String indicating which model config to use.
         """
         self.test: pd.DataFrame = test
         self.train: pd.DataFrame = train
         self.config_path: str = config_path
         self.entry_point: str = entry_point
         self.model_params: dict = {}
+        self.model: Callable = Callable
+        self.target: pd.Series = pd.Series(dtype=int)
         self.results: pd.DataFrame = pd.DataFrame()
 
-    def __get_target(self) -> pd.Series:
+    def __get_target(self) -> None:
         """Splits the target variable from the rest of the explanatory train
         variables.
-
-        Returns:
-            pd.Series: The target variable.
         """
         # Separate the target variable.
-        target: pd.Series = self.train.target_flag
+        self.target = self.train.target_flag
 
         # Drop the target variable.
         self.train = self.train.drop(columns=["target_flag"])
-
-        # Return the target.
-        return target
 
     def __parse_model_params(self) -> dict:
         """Uses the config path and entry point defined at object creation to
@@ -315,6 +304,86 @@ class Modeller():
         # Set model params attribute to the set of parameters of interest.
         self.model_params = model_params[self.entry_point]
 
+    def __scale_features(self) -> None:
+        """Performs standard scaling on all the data in the test and train sets.
+        """
+        # Instantiate a StandardScaler object.
+        scaler = StandardScaler()
+
+        # Perform scaling on the test and train sets.
+        self.test = pd.DataFrame(
+            scaler.fit_transform(X=self.test), columns=self.test.columns
+        )
+        self.train = pd.DataFrame(
+            scaler.fit_transform(X=self.train), columns=self.train.columns
+        )
+
+    def __logistic_regression(self) -> None:
+        """Instantiates a regularized logistic regression model in the model
+        attribute.
+        """
+        self.model = LogisticRegression(
+            C=self.model_params["C"],
+            dual=self.model_params["dual"],
+            solver=self.model_params["solver"],
+            penalty=self.model_params["penalty"],
+            l1_ratio=self.model_params["l1_ratio"],
+            max_iter=self.model_params["max_iter"],
+            random_state=self.model_params["random_state"],
+        )
+
+    def __svc(self) -> None:
+        """Instantiates a regularized support vector classifier model in the
+        model attribute.
+        """
+        self.model = SVC(
+            C=self.model_params["C"],
+            kernel=self.model_params["kernel"],
+            max_iter=self.model_params["max_iter"],
+        )
+
+    def __catboost(self) -> None:
+        """Instantiates a regularized catboost classifier model in the model
+        attribute.
+        """
+        self.model = CatBoostClassifier(
+            depth=self.model_params["depth"],
+            verbose=self.model_params["verbose"],
+            iterations=self.model_params["iterations"],
+            eval_metric=self.model_params["metric"],
+            l2_leaf_reg=self.model_params["l2_leaf_reg"],
+            learning_rate=self.model_params["learning_rate"],
+            random_strength=self.model_params["random_strength"],
+        )
+
+    def __execute_cross_validation(self) -> Tuple[Callable, float]:
+        """Carries out cross-validation according to the user's specifications.
+
+        Returns:
+            Tuple[Callable, float]: The best model according to the validation
+                                    score as well as said score.
+        """
+        # Perform cross-validation according to the user's specifications.
+        cross_val_output: dict = cross_validate(
+            estimator=self.model,
+            X=self.train,
+            y=self.target,
+            cv=self.model_params["cv_iter"],
+            scoring=self.model_params["metric"].lower(),
+            return_estimator=True,
+        )
+
+        # Locate the index of the best performing model.
+        idx_best_model: int = list(cross_val_output["test_score"]).index(
+            max(cross_val_output["test_score"])
+        )
+
+        # Return the best performing model.
+        return (
+            cross_val_output["estimator"][idx_best_model],
+            max(cross_val_output["test_score"]),
+        )
+
     def __plot_feature_importances(self, coefficients: np.ndarray) -> None:
         """Plots the importance of each feature used to fit and predict a model.
         Saves the plot in the plots folder under the run number.
@@ -328,9 +397,7 @@ class Modeller():
         )
 
         # Sort the DataFrame in order of decreasing feature importance.
-        df_features.sort_values(
-            by=["coefficients"], ascending=False, inplace=True
-        )
+        df_features.sort_values(by=["coefficients"], ascending=False, inplace=True)
 
         # Plot Searborn bar chart.
         sns.barplot(x=df_features.coefficients, y=df_features.feature_names)
@@ -358,108 +425,90 @@ class Modeller():
         """
         # Make a DataFrame using the predictions.
         df_preds: pd.DataFrame = pd.DataFrame.from_records(
-            {"index": list(self.test.index), "target": list(preds)},
-            index="index",
+            {"index": list(self.test.index), "target": list(preds)}, index="index",
         )
 
         # Export CSV of predictions to the appropriate folder.
         df_preds.to_csv(f"predictions/{self.entry_point}.csv")
 
-    def __logistic_regression(self, target: pd.Series) -> None:
-        """Executes a regularized logistic regression model. Model performance
-        is recorded in the results attribute.
-
-        Args:
-            target (pd.Series): The train set target variable.
+    def __execute_unique_iteration(self) -> None:
+        """Executes a unique modelling iteration, which consists of:
+        - Carrying out cross-validation,
+        - Fitting the best model on the entire train set,
+        - Making predictions on the train set,
+        - Scoring these predictions with the F1 score,
+        - Loggin the model's performance,
+        - Plotting the model's feature importances, and
+        - Saving the model's predictions on the test set.
         """
-        # Create logistic regression object.
-        log_reg: LogisticRegression = LogisticRegression(
-            C=self.model_params["C"],
-            dual=self.model_params["dual"],
-            solver=self.model_params["solver"],
-            penalty=self.model_params["penalty"],
-            max_iter=self.model_params["max_iter"],
-            random_state=self.model_params["random_state"],
-        )
+        # Carry out cross-validation.
+        best_model: Tuple[Callable, float] = self.__execute_cross_validation()
 
-        # Fit the model.
-        log_reg.fit(X=self.train, y=target)
+        # Fit the best model on the entire train set.
+        if self.model_params["model"] == "catboost":
+            best_model[0].fit(Pool(self.train, self.target))
+        else:
+            best_model[0].fit(self.train, self.target)
 
         # Make predictions on train set.
-        train_preds: pd.Series = log_reg.predict(X=self.train)
+        train_preds: pd.Series = best_model[0].predict(self.train)
 
         # Score train set performance.
-        train_score: float = f1_score(y_true=target, y_pred=train_preds)
+        train_score: float = f1_score(y_true=self.target, y_pred=train_preds)
 
         # Log score and run information.
         self.results = pd.DataFrame.from_dict(
             {
                 "run_number": [self.entry_point.split("_")[-1]],
                 "model": [self.model_params["model"]],
-                "metric": [self.model_params["metric"]],
+                "metric": [self.model_params["metric"].lower()],
+                "best_val_score": [best_model[1]],
                 "train_score": [train_score],
             }
         )
 
-        # Plot feature importance.
-        self.__plot_feature_importances(coefficients=log_reg.coef_[0])
+        # Plot feature importances.
+        if self.model_params["model"] == "catboost":
+            self.__plot_feature_importances(
+                coefficients=best_model[0].get_feature_importance()
+            )
+        elif self.model_params["model"] == "logistic_regression":
+            self.__plot_feature_importances(coefficients=best_model[0].coef_[0])
+        elif (
+            self.model_params["model"] == "svc"
+            and self.model_params["kernel"] == "linear"
+        ):
+            self.__plot_feature_importances(coefficients=best_model[0].coef_[0])
 
         # Save predictions on test set.
-        self.__save_predictions(preds=log_reg.predict(X=self.test))
-
-    def __linear_svc(self, target: pd.Series) -> None:
-        """Executes a regularized support vector linear classifier model. Model
-        performance is in the results attribute.
-
-        Args:
-            target (pd.Series): The train set target variable.
-        """
-        # Create a support vector linear classifier object.
-        linear_svc: LinearSVC = LinearSVC(
-            C=self.model_params["C"],
-            loss=self.model_params["loss"],
-            dual=self.model_params["dual"],
-            penalty=self.model_params["penalty"],
-            max_iter=self.model_params["max_iter"],
-        )
-
-        # Fit the model.
-        linear_svc.fit(X=self.train, y=target)
-
-        # Make predictions on train set.
-        train_preds: pd.Series = linear_svc.predict(X=self.train)
-
-        # Score train set performance.
-        train_score: float = f1_score(y_true=target, y_pred=train_preds)
-
-        # Log score and run information.
-        self.results = pd.DataFrame.from_dict(
-            {
-                "run_number": [self.entry_point.split("_")[-1]],
-                "model": [self.model_params["model"]],
-                "metric": [self.model_params["metric"]],
-                "train_score": [train_score],
-            }
-        )
-
-        # Plot feature importance.
-        self.__plot_feature_importances(coefficients=linear_svc.coef_[0])
-
-        # Save predictions on test set.
-        self.__save_predictions(preds=linear_svc.predict(X=self.test))
+        self.__save_predictions(preds=best_model[0].predict(self.test))
 
     def __call__(self) -> None:
         """Executes a Modeller object. It does not return the results. One can
         access the results via the results attribute of the Modeller object.
         """
         # Get target variable.
-        target: pd.Series = self.__get_target()
+        self.__get_target()
 
         # Parse model config pased by the user.
         self.__parse_model_params()
 
-        # Execute model specified by the user.
+        # Execute model specified by the user. Inform the user if they haven't
+        # specified one of the models below.
         if self.model_params["model"] == "logistic_regression":
-            self.__logistic_regression(target=target)
-        if self.model_params["model"] == "linear_svc":
-            self.__linear_svc(target=target)
+            self.__scale_features()
+            self.__logistic_regression()
+            self.__execute_unique_iteration()
+        elif self.model_params["model"] == "svc":
+            self.__scale_features()
+            self.__svc()
+            self.__execute_unique_iteration()
+        elif self.model_params["model"] == "catboost":
+            self.__catboost()
+            self.__execute_unique_iteration()
+        else:
+            print(
+                f"Recieved {self.model_params['model']}. " +
+                "Expected logistic_regression, svc, or catboost." +
+                "Please retry."
+            )
